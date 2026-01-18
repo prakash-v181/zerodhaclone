@@ -6,12 +6,13 @@ const Holdings = () => {
   const [allHoldings, setAllHoldings] = useState([]);
 
   useEffect(() => {
-    API.get("/allHoldings")
+    //  CORRECT API ENDPOINT
+    API.get("/api/allHoldings")
       .then((res) => setAllHoldings(res.data))
       .catch((err) => console.error("Failed to fetch holdings", err));
   }, []);
 
-  //  TOTAL P&L (UNREALISED)
+  // TOTAL P&L (UNREALISED)
   const totalPnL = allHoldings.reduce((sum, stock) => {
     return sum + (stock.price - stock.avg) * stock.qty;
   }, 0);
@@ -33,7 +34,7 @@ const Holdings = () => {
     <>
       <h3 className="title">Holdings ({allHoldings.length})</h3>
 
-      {/*  PORTFOLIO SUMMARY */}
+      {/* PORTFOLIO SUMMARY */}
       <div className="row mb-4">
         <div className="col">
           <h5 className={totalPnL >= 0 ? "profit" : "loss"}>
@@ -88,6 +89,7 @@ const Holdings = () => {
 };
 
 export default Holdings;
+
 
 
 

@@ -11,16 +11,17 @@ function Login() {
 
     if (!email || !password) {
       alert("Please enter email and password");
+      // API endpoint: http://13.233.33.54:5000/api/login
       return;
     }
 
     try {
       setLoading(true);
 
-      //  Login (cookie is set by backend)
-      await API.post("/login", { email, password });
+      //  CORRECT API ENDPOINT
+      await API.post("/api/login", { email, password });
 
-      //  Redirect to dashboard (3002)
+      //  Redirect to dashboard
       window.location.href = "http://localhost:3002/";
     } catch (err) {
       console.error("Login failed:", err.response?.data || err.message);
