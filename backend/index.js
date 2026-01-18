@@ -15,27 +15,35 @@ const { PositionsModel } = require("./model/PositionsModel");
 const { OrdersModel } = require("./model/OrdersModel");
 const { UserModel } = require("./model/UserModel");
 
-const PORT = process.env.PORT || 3001;
-const uri = process.env.MONGO_URL;
-
 const app = express();
+
+/* ================= ENV ================= */
+
+const PORT = process.env.PORT || 5000;
+const uri = process.env.MONGO_URI;
 
 /* ================= MIDDLEWARE ================= */
 
 app.use(
   cors({
-    origin: ["http://localhost:3000", "http://localhost:3002"],
-    credentials: true,
+    origin: true,            // allow all origins (safe for now)
+    credentials: true,       // REQUIRED for cookies
   })
 );
 
 app.use(bodyParser.json());
 app.use(cookieParser());
 
+/* ================= HEALTH CHECK ================= */
+
+app.get("/", (req, res) => {
+  res.status(200).send("Zerodha backend is running");
+});
+
 /* ================= AUTH ================= */
 
 // SIGNUP
-app.post("/signup", async (req, res) => {
+app.post("/api/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
@@ -58,8 +66,8 @@ app.post("/signup", async (req, res) => {
   }
 });
 
-// LOGIN (COOKIE BASED)
-app.post("/login", async (req, res) => {
+// LOGIN
+app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -91,19 +99,19 @@ app.post("/login", async (req, res) => {
 });
 
 // LOGOUT
-app.post("/logout", (req, res) => {
+app.post("/api/logout", (req, res) => {
   res.clearCookie("token");
   res.json({ success: true });
 });
 
 /* ================= PROTECTED DATA ================= */
 
-app.get("/allHoldings", authMiddleware, async (req, res) => {
+app.get("/api/allHoldings", authMiddleware, async (req, res) => {
   const data = await HoldingsModel.find({});
   res.json(data);
 });
 
-app.get("/allPositions", authMiddleware, async (req, res) => {
+app.get("/api/allPositions", authMiddleware, async (req, res) => {
   const positions = await PositionsModel.find({});
 
   const enriched = positions.map((p) => {
@@ -119,14 +127,14 @@ app.get("/allPositions", authMiddleware, async (req, res) => {
   res.json(enriched);
 });
 
-app.get("/allOrders", authMiddleware, async (req, res) => {
+app.get("/api/allOrders", authMiddleware, async (req, res) => {
   const orders = await OrdersModel.find({}).sort({ createdAt: -1 });
   res.json(orders);
 });
 
 /* ================= BUY / SELL ================= */
 
-app.post("/newOrder", authMiddleware, async (req, res) => {
+app.post("/api/newOrder", authMiddleware, async (req, res) => {
   try {
     const { name, qty, price, mode } = req.body;
     const quantity = Number(qty);
@@ -142,7 +150,7 @@ app.post("/newOrder", authMiddleware, async (req, res) => {
       mode,
     });
 
-    /* -------- BUY -------- */
+    // BUY
     if (mode === "BUY") {
       const position = await PositionsModel.findOne({ name });
 
@@ -167,7 +175,7 @@ app.post("/newOrder", authMiddleware, async (req, res) => {
       }
     }
 
-    /* -------- SELL -------- */
+    // SELL
     if (mode === "SELL") {
       const position = await PositionsModel.findOne({ name });
 
@@ -210,7 +218,7 @@ app.post("/newOrder", authMiddleware, async (req, res) => {
 
 /* ================= SAMPLE DATA ================= */
 
-app.get("/seed/holdings", async (req, res) => {
+app.get("/api/seed/holdings", async (req, res) => {
   await HoldingsModel.insertMany([
     { name: "TCS", qty: 2, avg: 3200, price: 3300, net: "+3%", day: "+1%" },
     { name: "INFY", qty: 1, avg: 1400, price: 1500, net: "+7%", day: "+2%" },
@@ -219,7 +227,7 @@ app.get("/seed/holdings", async (req, res) => {
   res.send("Holdings added");
 });
 
-app.get("/seed/positions", async (req, res) => {
+app.get("/api/seed/positions", async (req, res) => {
   await PositionsModel.insertMany([
     {
       product: "CNC",
@@ -241,16 +249,14 @@ app.get("/seed/positions", async (req, res) => {
 mongoose
   .connect(uri)
   .then(() => {
-    console.log(" MongoDB connected");
-    app.listen(PORT, () => {
-      console.log(` Server running on http://localhost:${PORT}`);
+    console.log("MongoDB connected");
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
     });
   })
   .catch((err) => {
-    console.error(" MongoDB connection failed", err);
+    console.error("MongoDB connection failed", err);
   });
-
-
 
 
 
