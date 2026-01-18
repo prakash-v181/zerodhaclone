@@ -26,8 +26,8 @@ const uri = process.env.MONGO_URI;
 
 app.use(
   cors({
-    origin: true,            // allow all origins (safe for now)
-    credentials: true,       // REQUIRED for cookies
+    origin: "http://localhost:3000", // frontend URL
+    credentials: true,               // REQUIRED for cookies
   })
 );
 
@@ -90,6 +90,7 @@ app.post("/api/login", async (req, res) => {
     res.cookie("token", token, {
       httpOnly: true,
       sameSite: "lax",
+      secure: false, // change to true when using HTTPS
     });
 
     res.json({ success: true });
@@ -211,7 +212,6 @@ app.post("/api/newOrder", authMiddleware, async (req, res) => {
 
     res.json({ message: `${mode} order processed successfully` });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: "Order failed" });
   }
 });
@@ -257,9 +257,6 @@ mongoose
   .catch((err) => {
     console.error("MongoDB connection failed", err);
   });
-
-
-
 
 
 
