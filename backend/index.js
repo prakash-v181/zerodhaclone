@@ -43,7 +43,7 @@ app.use(
       "http://localhost:3000",
       "http://localhost:3001",
       "https://zerodhafnd-ui.vercel.app",
-      "https://zerodhadashboard-sooty.vercel.app"
+      "https://dashazerodhprakash.vercel.app/"
     ],
     credentials: true
   })
