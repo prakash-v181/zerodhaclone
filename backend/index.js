@@ -39,7 +39,12 @@ app.use(cookieParser());
 
 app.use(
   cors({
-    origin: ["http://localhost:3000", "http://localhost:3001"],
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "https://zerodhafnd-ui.vercel.app",
+      "https://zerodhadashboard-sooty.vercel.app"
+    ],
     credentials: true
   })
 );
