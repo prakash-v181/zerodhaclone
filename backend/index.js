@@ -37,17 +37,22 @@ app.use(cookieParser());
 // );
 
 
-app.use(
-  cors({
-    origin: [
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "https://zerodhafnd-ui.vercel.app",
-      "https://dashazerodhsangvi.vercel.app"
-    ],
-    credentials: true
-  })
-);
+
+
+const corsOptions = {
+  origin: [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://zerodhafnd-ui.vercel.app",
+    "https://dashazerodhsangvi.vercel.app"
+  ],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 
 const authMiddleware = (req, res, next) => {
