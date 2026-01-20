@@ -77,7 +77,7 @@ const Menu = () => {
               </p>
             </Link>
           </li>
-          <li><a href="/orders">Orders</a></li>
+          
           <li>
             <Link
               style={{ textDecoration: "none" }}
@@ -92,7 +92,7 @@ const Menu = () => {
         </ul>
         <hr />
         <div className="profile" onClick={handleProfileClick}>
-          <div className="avatar">ZU</div>
+          <div className="avatar">India</div>
           <p className="username">Prakash</p>
         </div>
       </div>

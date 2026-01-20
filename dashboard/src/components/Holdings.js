@@ -1,46 +1,84 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import API from "../api";
 import { VerticalGraph } from "./VerticalGraph";
 
-const Holdings = () => {
-  const [allHoldings, setAllHoldings] = useState([]);
+const AllHoldings = () => {
+  const [holdings, setHoldings] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    //  CORRECT API ENDPOINT
     API.get("/api/allHoldings")
-      .then((res) => setAllHoldings(res.data))
-      .catch((err) => console.error("Failed to fetch holdings", err));
+      .then((res) => {
+        const data = Array.isArray(res.data) ? res.data : [];
+        // ❌ remove qty = 0 holdings
+        setHoldings(data.filter(h => Number(h.qty) > 0));
+      })
+      .catch(() => {
+        setHoldings([]);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
 
-  // TOTAL P&L (UNREALISED)
-  const totalPnL = allHoldings.reduce((sum, stock) => {
-    return sum + (stock.price - stock.avg) * stock.qty;
+  if (loading) {
+    return <h3>Loading holdings...</h3>;
+  }
+
+  // 🔁 simulate live market price
+  const getLivePrice = (base) =>
+    base + Math.floor(Math.random() * 20 - 10);
+
+  // TOTAL P & L
+  const totalPnL = holdings.reduce((sum, h) => {
+    const qty = Number(h.qty) || 0;
+    const avg = Number(h.avg) || 0;
+    const basePrice = Number(h.price) || 0;
+    const livePrice = getLivePrice(basePrice);
+
+    return sum + (livePrice - avg) * qty;
   }, 0);
 
-  const labels = allHoldings.map((stock) => stock.name);
+  const totalPnLClass =
+    totalPnL > 0 ? "profit" : totalPnL < 0 ? "loss" : "neutral";
 
-  const data = {
-    labels,
+  const chartData = {
+    labels: holdings.map(h => h.name),
     datasets: [
       {
-        label: "Stock Price",
-        data: allHoldings.map((stock) => stock.price),
-        backgroundColor: "rgba(255, 99, 132, 0.5)",
+        label: "Last Traded Price",
+        data: holdings.map(h => getLivePrice(Number(h.price) || 0)),
       },
     ],
   };
 
   return (
     <>
-      <h3 className="title">Holdings ({allHoldings.length})</h3>
+      {/* INLINE CSS */}
+      <style>{`
+        .profit { color: #2ecc71; font-weight: 600; }
+        .loss { color: #e74c3c; font-weight: 600; }
+        .neutral { color: #8e44ad; font-weight: 600; }
 
-      {/* PORTFOLIO SUMMARY */}
+        .order-table table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+        .order-table th, .order-table td {
+          padding: 10px;
+          border-bottom: 1px solid #ddd;
+          text-align: center;
+        }
+      `}</style>
+
+      <h3 className="title">Holdings ({holdings.length})</h3>
+
       <div className="row mb-4">
         <div className="col">
-          <h5 className={totalPnL >= 0 ? "profit" : "loss"}>
+          <h5 className={totalPnLClass}>
             {totalPnL.toFixed(2)}
           </h5>
-          <p>Total P&amp;L</p>
+          <p>Total P and L</p>
         </div>
       </div>
 
@@ -49,33 +87,43 @@ const Holdings = () => {
           <thead>
             <tr>
               <th>Instrument</th>
-              <th>Qty.</th>
-              <th>Avg. cost</th>
+              <th>Qty</th>
+              <th>Avg Price</th>
               <th>LTP</th>
-              <th>Cur. val</th>
-              <th>P&amp;L</th>
-              <th>Net chg.</th>
-              <th>Day chg.</th>
+              <th>Current Value</th>
+              <th>P and L</th>
             </tr>
           </thead>
 
           <tbody>
-            {allHoldings.map((stock) => {
-              const pnl = (stock.price - stock.avg) * stock.qty;
-              const curValue = stock.price * stock.qty;
-              const profClass = pnl >= 0 ? "profit" : "loss";
-              const dayClass = stock.isLoss ? "loss" : "profit";
+            {holdings.length === 0 && (
+              <tr>
+                <td colSpan="6">No holdings found</td>
+              </tr>
+            )}
+
+            {holdings.map((h, index) => {
+              const qty = Number(h.qty) || 0;
+              const avg = Number(h.avg) || 0;
+              const basePrice = Number(h.price) || 0;
+              const livePrice = getLivePrice(basePrice);
+
+              const pnl = (livePrice - avg) * qty;
+              const currentValue = livePrice * qty;
+
+              const pnlClass =
+                pnl > 0 ? "profit" : pnl < 0 ? "loss" : "neutral";
 
               return (
-                <tr key={stock._id || stock.name}>
-                  <td>{stock.name}</td>
-                  <td>{stock.qty}</td>
-                  <td>{Number(stock.avg).toFixed(2)}</td>
-                  <td>{Number(stock.price).toFixed(2)}</td>
-                  <td>{Number(curValue).toFixed(2)}</td>
-                  <td className={profClass}>{pnl.toFixed(2)}</td>
-                  <td className={profClass}>{stock.net}</td>
-                  <td className={dayClass}>{stock.day}</td>
+                <tr key={h._id || index}>
+                  <td>{h.name}</td>
+                  <td>{qty}</td>
+                  <td>{avg.toFixed(2)}</td>
+                  <td>{livePrice.toFixed(2)}</td>
+                  <td>{currentValue.toFixed(2)}</td>
+                  <td className={pnlClass}>
+                    {pnl.toFixed(2)}
+                  </td>
                 </tr>
               );
             })}
@@ -83,12 +131,21 @@ const Holdings = () => {
         </table>
       </div>
 
-      <VerticalGraph data={data} />
+      <VerticalGraph data={chartData} />
     </>
   );
 };
 
-export default Holdings;
+export default AllHoldings;
+
+
+
+
+
+
+
+
+
 
 
 

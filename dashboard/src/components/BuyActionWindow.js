@@ -1,47 +1,50 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
-
+import React, { useState, useContext } from "react";
+import GeneralContext from "./GeneralContext";
 import API from "../api";
-
 import "./BuyActionWindow.css";
 
 const BuyActionWindow = ({ uid }) => {
+  const { closeBuyWindow } = useContext(GeneralContext);
+
   const [stockQuantity, setStockQuantity] = useState(1);
-  const [stockPrice, setStockPrice] = useState(0.0);
+  const [stockPrice, setStockPrice] = useState(1);
 
   const handleBuyClick = async () => {
+    const qty = Number(stockQuantity);
+    const price = Number(stockPrice);
+
+    if (!uid || qty <= 0 || price <= 0) {
+      alert("Please enter valid quantity and price");
+      return;
+    }
+
     try {
-      await API.post("/newOrder", {
+      await API.post("/api/newOrder", {
         name: uid,
-        qty: Number(stockQuantity),
-        price: Number(stockPrice),
-        mode: "BUY",
+        qty: qty,
+        price: price,
+        mode: "BUY"
       });
 
-      alert("BUY order placed successfully");
-
-      // just close popup by reload (simple & safe)
-      window.location.reload();
+      alert("Order placed successfully");
+      closeBuyWindow();
     } catch (error) {
-      alert("BUY failed");
-      console.error(error);
+      console.error("Buy error", error);
+      alert("Buy failed");
     }
   };
 
-  const handleCancelClick = () => {
-    window.location.reload();
-  };
-
   return (
-    <div className="container" id="buy-window" draggable="true">
+    <div className="container" id="buy-window">
       <div className="regular-order">
         <div className="inputs">
           <fieldset>
-            <legend>Qty.</legend>
+            <legend>Qty</legend>
             <input
               type="number"
-              onChange={(e) => setStockQuantity(e.target.value)}
+              min="1"
               value={stockQuantity}
+              onChange={(e) => setStockQuantity(e.target.value)}
             />
           </fieldset>
 
@@ -49,23 +52,24 @@ const BuyActionWindow = ({ uid }) => {
             <legend>Price</legend>
             <input
               type="number"
+              min="0.01"
               step="0.05"
-              onChange={(e) => setStockPrice(e.target.value)}
               value={stockPrice}
+              onChange={(e) => setStockPrice(e.target.value)}
             />
           </fieldset>
         </div>
       </div>
 
       <div className="buttons">
-        <span>Margin required ₹140.65</span>
+        <span>Margin required 140.65</span>
         <div>
-          <Link className="btn btn-blue" onClick={handleBuyClick}>
+          <button className="btn btn-blue" onClick={handleBuyClick}>
             Buy
-          </Link>
-          <Link className="btn btn-grey" onClick={handleCancelClick}>
+          </button>
+          <button className="btn btn-grey" onClick={closeBuyWindow}>
             Cancel
-          </Link>
+          </button>
         </div>
       </div>
     </div>
@@ -73,12 +77,6 @@ const BuyActionWindow = ({ uid }) => {
 };
 
 export default BuyActionWindow;
-
-
-
-
-
-
 
 
 

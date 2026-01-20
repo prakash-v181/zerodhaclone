@@ -843,4 +843,20 @@ hr {
 }
 
 
+/* // Customized classes for profit, loss, and neutral indicators // */
 
+
+.profit {
+  color: #2ecc71;
+  font-weight: 600;
+}
+
+.loss {
+  color: #e74c3c;
+  font-weight: 600;
+}
+
+.neutral {
+  color: #8e44ad;
+  font-weight: 600;
+}

@@ -1,12 +1,7 @@
 const mongoose = require("mongoose");
 const { PositionsSchema } = require("../schemas/PositionsSchema");
 
-// Correct way to create model
-const PositionsModel = mongoose.model(
-  "Position",
-  PositionsSchema,
-  "positions"   // force collection name
-);
+const PositionsModel = mongoose.model("Position", PositionsSchema);
 
 module.exports = { PositionsModel };
 

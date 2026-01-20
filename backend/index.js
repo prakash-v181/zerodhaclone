@@ -2,260 +2,371 @@ require("dotenv").config();
 
 const express = require("express");
 const mongoose = require("mongoose");
-const bodyParser = require("body-parser");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const cookieParser = require("cookie-parser");
 
-const authMiddleware = require("./middleware/auth");
-
+const { UserModel } = require("./model/UserModel");
+const { OrdersModel } = require("./model/OrdersModel");
 const { HoldingsModel } = require("./model/HoldingsModel");
 const { PositionsModel } = require("./model/PositionsModel");
-const { OrdersModel } = require("./model/OrdersModel");
-const { UserModel } = require("./model/UserModel");
 
 const app = express();
 
-/* ================= ENV ================= */
-
 const PORT = process.env.PORT || 5000;
-const uri = process.env.MONGO_URI;
+const MONGO_URI = process.env.MONGO_URI;
+const JWT_SECRET = process.env.JWT_SECRET;
 
-/* ================= MIDDLEWARE ================= */
+if (!MONGO_URI || !JWT_SECRET) {
+  console.error("Missing environment variables");
+  process.exit(1);
+}
+
+app.use(express.json());
+app.use(cookieParser());
 
 app.use(
   cors({
-    origin: "http://localhost:3000", // frontend URL
-    credentials: true,               // REQUIRED for cookies
+    origin: ["http://localhost:3000", "http://localhost:3001"],
+    credentials: true
   })
 );
 
-app.use(bodyParser.json());
-app.use(cookieParser());
+const authMiddleware = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
 
-/* ================= HEALTH CHECK ================= */
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ message: "No token provided" });
+    }
 
-app.get("/", (req, res) => {
-  res.status(200).send("Zerodha backend is running");
+    const token = authHeader.split(" ")[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: "Invalid token" });
+  }
+};
+
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok" });
 });
 
-/* ================= AUTH ================= */
-
-// SIGNUP
 app.post("/api/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    const exists = await UserModel.findOne({ email });
-    if (exists) {
-      return res.status(400).json({ message: "User already exists" });
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required"
+      });
+    }
+
+    const existingUser = await UserModel.findOne({
+      email: email.toLowerCase().trim()
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "Email already registered"
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     await UserModel.create({
       name,
-      email,
-      password: hashedPassword,
+      email: email.toLowerCase().trim(),
+      password: hashedPassword
     });
 
-    res.json({ message: "Signup successful" });
-  } catch (err) {
-    res.status(500).json({ message: "Signup failed" });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false });
   }
 });
 
-// LOGIN
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await UserModel.findOne({ email });
+    if (!email || !password) {
+      return res.status(400).json({ success: false });
+    }
+
+    const user = await UserModel.findOne({
+      email: email.toLowerCase().trim()
+    });
+
     if (!user) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ success: false });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
+
     if (!isMatch) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ success: false });
     }
 
     const token = jwt.sign(
-      { userId: user._id },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
+      { userId: user._id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: "24h" }
     );
 
-    res.cookie("token", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false, // change to true when using HTTPS
-    });
-
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ message: "Login failed" });
+    res.json({ success: true, token });
+  } catch (error) {
+    res.status(500).json({ success: false });
   }
 });
 
-// LOGOUT
-app.post("/api/logout", (req, res) => {
-  res.clearCookie("token");
-  res.json({ success: true });
-});
+// app.post("/api/newOrder", authMiddleware, async (req, res) => {
+//   try {
+//     const { name, qty, price, mode } = req.body;
+//     const userId = req.user.userId;
 
-/* ================= PROTECTED DATA ================= */
+//     const quantity = Number(qty);
+//     const orderPrice = Number(price);
 
-app.get("/api/allHoldings", authMiddleware, async (req, res) => {
-  const data = await HoldingsModel.find({});
-  res.json(data);
-});
+//     if (!name || !mode || quantity <= 0 || orderPrice <= 0) {
+//       return res.status(400).json({ success: false });
+//     }
 
-app.get("/api/allPositions", authMiddleware, async (req, res) => {
-  const positions = await PositionsModel.find({});
+//     if (mode === "SELL") {
+//       const holding = await HoldingsModel.findOne({ userId, name });
+//       if (!holding || holding.qty < quantity) {
+//         return res.status(400).json({ success: false });
+//       }
+//     }
 
-  const enriched = positions.map((p) => {
-    const pnl = (p.price - p.avg) * p.qty;
+//     await OrdersModel.create({
+//       userId,
+//       name,
+//       qty: quantity,
+//       price: orderPrice,
+//       mode
+//     });
 
-    return {
-      ...p.toObject(),
-      pnl,
-      pnlPercent: ((p.price - p.avg) / p.avg) * 100,
-    };
-  });
+//     // if (mode === "BUY") {
+//     //   let holding = await HoldingsModel.findOne({ userId, name });
 
-  res.json(enriched);
-});
+//     //   if (holding) {
+//     //     const totalQty = holding.qty + quantity;
+//     //     holding.avg =
+//     //       (holding.avg * holding.qty + orderPrice * quantity) / totalQty;
+//     //     holding.qty = totalQty;
+//     //     holding.price = orderPrice;
+//     //     await holding.save();
+//     //   } else {
+//     //     await HoldingsModel.create({
+//     //       userId,
+//     //       name,
+//     //       qty: quantity,
+//     //       avg: orderPrice,
+//     //       price: orderPrice
+//     //     });
+//     //   }
 
-app.get("/api/allOrders", authMiddleware, async (req, res) => {
-  const orders = await OrdersModel.find({}).sort({ createdAt: -1 });
-  res.json(orders);
-});
+//     //   let position = await PositionsModel.findOne({ userId, name });
 
-/* ================= BUY / SELL ================= */
+//     //   if (position) {
+//     //     position.qty += quantity;
+//     //     position.price = orderPrice;
+//     //     await position.save();
+//     //   } else {
+//     //     await PositionsModel.create({
+//     //       userId,
+//     //       name,
+//     //       qty: quantity,
+//     //       avg: orderPrice,
+//     //       price: orderPrice,
+//     //       product: "MIS"
+//     //     });
+//     //   }
+//     // }
+
+
+//     if (mode === "BUY") {
+//   const quantity = Number(qty);
+//   const orderPrice = Number(price);
+
+//   let holding = await HoldingsModel.findOne({ userId, name });
+
+//   if (holding) {
+//     const totalQty = holding.qty + quantity;
+//     holding.avg =
+//       (holding.avg * holding.qty + orderPrice * quantity) / totalQty;
+//     holding.qty = totalQty;
+//     holding.price = orderPrice;
+//     await holding.save();
+//   } else {
+//     await HoldingsModel.create({
+//       userId,
+//       name,
+//       qty: quantity,
+//       avg: orderPrice,
+//       price: orderPrice
+//     });
+//   }
+
+//   let position = await PositionsModel.findOne({ userId, name });
+
+//   if (position) {
+//     position.qty += quantity;
+//     position.price = orderPrice;
+//     await position.save();
+//   } else {
+//     await PositionsModel.create({
+//       userId,
+//       name,
+//       qty: quantity,
+//       avg: orderPrice,
+//       price: orderPrice,
+//       product: "MIS"
+//     });
+//   }
+// }
+
+
+//     if (mode === "SELL") {
+//       await HoldingsModel.updateOne(
+//         { userId, name },
+//         { $inc: { qty: -quantity } }
+//       );
+
+//       await PositionsModel.updateOne(
+//         { userId, name },
+//         { $inc: { qty: -quantity } }
+//       );
+//     }
+
+//     res.json({ success: true });
+//   } catch (error) {
+//     res.status(500).json({ success: false });
+//   }
+// });
+
+
 
 app.post("/api/newOrder", authMiddleware, async (req, res) => {
   try {
     const { name, qty, price, mode } = req.body;
-    const quantity = Number(qty);
+    const userId = req.user.userId;
 
-    if (!["BUY", "SELL"].includes(mode)) {
-      return res.status(400).json({ message: "Invalid order type" });
+    const quantity = Number(qty);
+    const orderPrice = Number(price);
+
+    if (!name || !mode || quantity <= 0 || orderPrice <= 0) {
+      return res.status(400).json({ success: false });
+    }
+
+    if (mode === "SELL") {
+      const holding = await HoldingsModel.findOne({ userId, name });
+      if (!holding || holding.qty < quantity) {
+        return res.status(400).json({ success: false });
+      }
     }
 
     await OrdersModel.create({
+      userId,
       name,
       qty: quantity,
-      price,
-      mode,
+      price: orderPrice,
+      mode
     });
 
-    // BUY
     if (mode === "BUY") {
-      const position = await PositionsModel.findOne({ name });
-
-      if (position) {
-        const totalQty = position.qty + quantity;
-        position.avg =
-          (position.avg * position.qty + price * quantity) / totalQty;
-        position.qty = totalQty;
-        position.price = price;
-        await position.save();
-      } else {
-        await PositionsModel.create({
-          product: "CNC",
-          name,
-          qty: quantity,
-          avg: price,
-          price,
-          net: "0%",
-          day: "0%",
-          isLoss: false,
-        });
-      }
-    }
-
-    // SELL
-    if (mode === "SELL") {
-      const position = await PositionsModel.findOne({ name });
-
-      if (!position || position.qty < quantity) {
-        return res.status(400).json({ message: "Not enough quantity" });
-      }
-
-      position.qty -= quantity;
-
-      if (position.qty === 0) {
-        await PositionsModel.deleteOne({ name });
-      } else {
-        await position.save();
-      }
-
-      const holding = await HoldingsModel.findOne({ name });
+      let holding = await HoldingsModel.findOne({ userId, name });
 
       if (holding) {
-        holding.qty += quantity;
-        holding.price = price;
+        const totalQty = holding.qty + quantity;
+        holding.avg =
+          (holding.avg * holding.qty + orderPrice * quantity) / totalQty;
+        holding.qty = totalQty;
+        holding.price = orderPrice;
         await holding.save();
       } else {
         await HoldingsModel.create({
+          userId,
           name,
           qty: quantity,
-          avg: price,
-          price,
-          net: "0%",
-          day: "0%",
+          avg: orderPrice,
+          price: orderPrice
+        });
+      }
+
+      let position = await PositionsModel.findOne({ userId, name });
+
+      if (position) {
+        position.qty += quantity;
+        position.price = orderPrice;
+        await position.save();
+      } else {
+        await PositionsModel.create({
+          userId,
+          name,
+          qty: quantity,
+          avg: orderPrice,
+          price: orderPrice,
+          product: "MIS"
         });
       }
     }
 
-    res.json({ message: `${mode} order processed successfully` });
-  } catch (err) {
-    res.status(500).json({ message: "Order failed" });
+    if (mode === "SELL") {
+      await HoldingsModel.updateOne(
+        { userId, name },
+        { $inc: { qty: -quantity } }
+      );
+
+      await PositionsModel.updateOne(
+        { userId, name },
+        { $inc: { qty: -quantity } }
+      );
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Order error:", error);
+    res.status(500).json({ success: false });
   }
 });
 
-/* ================= SAMPLE DATA ================= */
 
-app.get("/api/seed/holdings", async (req, res) => {
-  await HoldingsModel.insertMany([
-    { name: "TCS", qty: 2, avg: 3200, price: 3300, net: "+3%", day: "+1%" },
-    { name: "INFY", qty: 1, avg: 1400, price: 1500, net: "+7%", day: "+2%" },
-  ]);
+app.get("/api/allOrders", authMiddleware, async (req, res) => {
+  const orders = await OrdersModel.find({
+    userId: req.user.userId
+  }).sort({ createdAt: -1 });
 
-  res.send("Holdings added");
+  res.json(orders);
 });
 
-app.get("/api/seed/positions", async (req, res) => {
-  await PositionsModel.insertMany([
-    {
-      product: "CNC",
-      name: "RELIANCE",
-      qty: 2,
-      avg: 2500,
-      price: 2550,
-      net: "+2%",
-      day: "+0.5%",
-      isLoss: false,
-    },
-  ]);
-
-  res.send("Positions added");
+app.get("/api/allHoldings", authMiddleware, async (req, res) => {
+  const holdings = await HoldingsModel.find({
+    userId: req.user.userId
+  });
+  res.json(holdings);
 });
 
-/* ================= SERVER ================= */
+app.get("/api/allPositions", authMiddleware, async (req, res) => {
+  const positions = await PositionsModel.find({
+    userId: req.user.userId
+  });
+  res.json(positions);
+});
 
 mongoose
-  .connect(uri)
+  .connect(MONGO_URI)
   .then(() => {
-    console.log("MongoDB connected");
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on port ${PORT}`);
-    });
+    app.listen(PORT);
   })
-  .catch((err) => {
-    console.error("MongoDB connection failed", err);
+  .catch(() => {
+    process.exit(1);
   });
 
 
@@ -264,6 +375,1246 @@ mongoose
 
 
 
+
+
+
+// require("dotenv").config();
+
+// const express = require("express");
+// const mongoose = require("mongoose");
+// const cors = require("cors");
+// const jwt = require("jsonwebtoken");
+// const bcrypt = require("bcrypt");
+// const cookieParser = require("cookie-parser");
+
+// const { UserModel } = require("./model/UserModel");
+// const { OrdersModel } = require("./model/OrdersModel");
+// const { HoldingsModel } = require("./model/HoldingsModel");
+// const { PositionsModel } = require("./model/PositionsModel");
+
+// const app = express();
+
+// /* =======================
+//    ENV
+// ======================= */
+// const PORT = process.env.PORT || 5000;
+// const MONGO_URI = process.env.MONGO_URI;
+// const JWT_SECRET = process.env.JWT_SECRET;
+
+// if (!MONGO_URI || !JWT_SECRET) {
+//   console.error("Missing environment variables");
+//   process.exit(1);
+// }
+
+// /* =======================
+//    MIDDLEWARE
+// ======================= */
+// app.use(express.json());
+// app.use(cookieParser());
+
+// app.use(
+//   cors({
+//     origin: ["http://localhost:3000", "http://localhost:3001"],
+//     credentials: true
+//   })
+// );
+
+// /* =======================
+//    AUTH MIDDLEWARE
+// ======================= */
+// const authMiddleware = (req, res, next) => {
+//   try {
+//     const authHeader = req.headers.authorization;
+
+//     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+//       return res.status(401).json({ message: "No token provided" });
+//     }
+
+//     const token = authHeader.split(" ")[1];
+//     const decoded = jwt.verify(token, JWT_SECRET);
+
+//     req.user = decoded; // { userId, email }
+//     next();
+//   } catch (error) {
+//     return res.status(401).json({ message: "Invalid token" });
+//   }
+// };
+
+// /* =======================
+//    HEALTH
+// ======================= */
+// app.get("/api/health", (req, res) => {
+//   res.json({ status: "ok" });
+// });
+
+// /* =======================
+//    SIGNUP
+// ======================= */
+// app.post("/api/signup", async (req, res) => {
+//   try {
+//     const { name, email, password } = req.body;
+
+//     if (!name || !email || !password) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "All fields are required"
+//       });
+//     }
+
+//     const existingUser = await UserModel.findOne({
+//       email: email.toLowerCase().trim()
+//     });
+
+//     if (existingUser) {
+//       return res.status(409).json({
+//         success: false,
+//         message: "Email already registered"
+//       });
+//     }
+
+//     const hashedPassword = await bcrypt.hash(password, 10);
+
+//     await UserModel.create({
+//       name,
+//       email: email.toLowerCase().trim(),
+//       password: hashedPassword
+//     });
+
+//     res.json({
+//       success: true,
+//       message: "Signup successful"
+//     });
+//   } catch (error) {
+//     console.error("Signup error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error"
+//     });
+//   }
+// });
+
+// /* =======================
+//    LOGIN
+// ======================= */
+// app.post("/api/login", async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     if (!email || !password) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Email and password required"
+//       });
+//     }
+
+//     const user = await UserModel.findOne({
+//       email: email.toLowerCase().trim()
+//     });
+
+//     if (!user) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Invalid credentials"
+//       });
+//     }
+
+//     const isMatch = await bcrypt.compare(password, user.password);
+
+//     if (!isMatch) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Invalid credentials"
+//       });
+//     }
+
+//     const token = jwt.sign(
+//       { userId: user._id, email: user.email },
+//       JWT_SECRET,
+//       { expiresIn: "24h" }
+//     );
+
+//     res.json({
+//       success: true,
+//       token
+//     });
+//   } catch (error) {
+//     console.error("Login error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error"
+//     });
+//   }
+// });
+
+// /* =======================
+//    NEW ORDER
+// ======================= */
+// app.post("/api/newOrder", authMiddleware, async (req, res) => {
+//   try {
+//     const { name, qty, price, mode } = req.body;
+//     const userId = req.user.userId;
+
+//     if (!name || !qty || !price || !mode) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Missing required fields"
+//       });
+//     }
+
+//     await OrdersModel.create({
+//       userId,
+//       name,
+//       qty,
+//       price,
+//       mode
+//     });
+
+//     if (mode === "BUY") {
+//       let holding = await HoldingsModel.findOne({ userId, name });
+
+//       if (holding) {
+//         const totalQty = holding.qty + qty;
+//         holding.avg =
+//           (holding.avg * holding.qty + price * qty) / totalQty;
+//         holding.qty = totalQty;
+//         holding.price = price;
+//         await holding.save();
+//       } else {
+//         await HoldingsModel.create({
+//           userId,
+//           name,
+//           qty,
+//           avg: price,
+//           price
+//         });
+//       }
+
+//       let position = await PositionsModel.findOne({ userId, name });
+
+//       if (position) {
+//         position.qty += qty;
+//         position.price = price;
+//         await position.save();
+//       } else {
+//         await PositionsModel.create({
+//           userId,
+//           name,
+//           qty,
+//           avg: price,
+//           price,
+//           product: "MIS"
+//         });
+//       }
+//     }
+
+//     if (mode === "SELL") {
+//       await PositionsModel.updateOne(
+//         { userId, name },
+//         { $inc: { qty: -qty } }
+//       );
+
+//       await HoldingsModel.updateOne(
+//         { userId, name },
+//         { $inc: { qty: -qty } }
+//       );
+//     }
+
+//     res.json({ success: true });
+//   } catch (error) {
+//     console.error("Order error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Order failed"
+//     });
+//   }
+// });
+
+// /* =======================
+//    FETCH DATA
+// ======================= */
+// app.get("/api/allOrders", authMiddleware, async (req, res) => {
+//   const orders = await OrdersModel.find({
+//     userId: req.user.userId
+//   }).sort({ createdAt: -1 });
+
+//   res.json(orders);
+// });
+
+// app.get("/api/allHoldings", authMiddleware, async (req, res) => {
+//   const holdings = await HoldingsModel.find({
+//     userId: req.user.userId
+//   });
+//   res.json(holdings);
+// });
+
+// app.get("/api/allPositions", authMiddleware, async (req, res) => {
+//   const positions = await PositionsModel.find({
+//     userId: req.user.userId
+//   });
+//   res.json(positions);
+// });
+
+// /* =======================
+//    DATABASE
+// ======================= */
+// mongoose
+//   .connect(MONGO_URI)
+//   .then(() => {
+//     console.log("MongoDB connected");
+//     app.listen(PORT, () => {
+//       console.log("Server running on port", PORT);
+//     });
+//   })
+//   .catch((error) => {
+//     console.error("MongoDB error:", error);
+//     process.exit(1);
+//   });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// require("dotenv").config();
+
+// const express = require("express");
+// const mongoose = require("mongoose");
+// const cors = require("cors");
+// const jwt = require("jsonwebtoken");
+// const bcrypt = require("bcrypt");
+
+// const { UserModel } = require("./model/UserModel");
+// const { OrdersModel } = require("./model/OrdersModel");
+// const { HoldingsModel } = require("./model/HoldingsModel");
+// const { PositionsModel } = require("./model/PositionsModel");
+
+// const app = express();
+
+// /* =======================
+//    ENV VARIABLES
+// ======================= */
+// const PORT = process.env.PORT || 5000;
+// const MONGO_URI = process.env.MONGO_URI;
+// const JWT_SECRET = process.env.JWT_SECRET;
+
+// if (!MONGO_URI || !JWT_SECRET) {
+//   console.error(" Missing environment variables");
+//   process.exit(1);
+// }
+
+// const cookieParser = require("cookie-parser");
+// app.use(cookieParser());
+
+
+// /* =======================
+//    MIDDLEWARE
+// ======================= */
+// app.use(
+//   cors({
+//     origin: ["http://localhost:3000", "http://localhost:3001"],
+//     credentials: true,
+//   })
+// );
+
+// app.use(express.json());
+
+// /* =======================
+//    AUTH MIDDLEWARE
+// ======================= */
+// const authMiddleware = (req, res, next) => {
+//   try {
+//     const authHeader = req.headers.authorization;
+
+//     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+//       return res.status(401).json({ message: "No token provided" });
+//     }
+
+//     const token = authHeader.split(" ")[1];
+//     const decoded = jwt.verify(token, JWT_SECRET);
+
+//     req.user = decoded; // { userId, email }
+//     next();
+//   } catch (err) {
+//     return res.status(401).json({ message: "Invalid token" });
+//   }
+// };
+
+// /* =======================
+//    HEALTH CHECK
+// ======================= */
+// app.get("/api/health", (req, res) => {
+//   res.json({ status: "ok" });
+// });
+
+// /* =======================
+//    SIGNUP
+// ======================= */
+// app.post("/api/signup", async (req, res) => {
+//   try {
+//     const { name, email, password } = req.body;
+
+//     if (!name || !email || !password) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "All fields are required",
+//       });
+//     }
+
+//     const existingUser = await UserModel.findOne({
+//       email: email.toLowerCase().trim(),
+//     });
+
+//     if (existingUser) {
+//       return res.status(409).json({
+//         success: false,
+//         message: "Email already registered",
+//       });
+//     }
+
+//     const hashedPassword = await bcrypt.hash(password, 10);
+
+//     await UserModel.create({
+//       name,
+//       email: email.toLowerCase().trim(),
+//       password: hashedPassword,
+//     });
+
+//     res.json({
+//       success: true,
+//       message: "Signup successful",
+//     });
+//   } catch (error) {
+//     console.error("Signup error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//     });
+//   }
+// });
+
+// /* =======================
+//    LOGIN
+// ======================= */
+// app.post("/api/login", async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     if (!email || !password) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Email and password required",
+//       });
+//     }
+
+//     const user = await UserModel.findOne({
+//       email: email.toLowerCase().trim(),
+//     });
+
+//     if (!user) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Invalid credentials",
+//       });
+//     }
+
+//     const isMatch = await bcrypt.compare(password, user.password);
+
+//     if (!isMatch) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Invalid credentials",
+//       });
+//     }
+
+//     const token = jwt.sign(
+//       { userId: user._id, email: user.email },
+//       JWT_SECRET,
+//       { expiresIn: "24h" }
+//     );
+
+//     res.json({
+//       success: true,
+//       token,
+//     });
+//   } catch (error) {
+//     console.error("Login error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Server error",
+//     });
+//   }
+// });
+
+// /* =======================
+//    NEW ORDER
+// ======================= */
+// app.post("/api/newOrder", authMiddleware, async (req, res) => {
+//   try {
+//     const { name, qty, price, mode } = req.body;
+//     const userId = req.user.userId;
+
+//     await OrdersModel.create({
+//       userId,
+//       name,
+//       qty,
+//       price,
+//       mode,
+//     });
+
+//     /* BUY LOGIC */
+//     if (mode === "BUY") {
+//       let holding = await HoldingsModel.findOne({ name, userId });
+
+//       if (holding) {
+//         const totalQty = holding.qty + qty;
+//         holding.avg =
+//           (holding.avg * holding.qty + price * qty) / totalQty;
+//         holding.qty = totalQty;
+//         holding.price = price;
+//         await holding.save();
+//       } else {
+//         await HoldingsModel.create({
+//           userId,
+//           name,
+//           qty,
+//           avg: price,
+//           price,
+//         });
+//       }
+
+//       let position = await PositionsModel.findOne({ name, userId });
+//       if (position) {
+//         position.qty += qty;
+//         position.price = price;
+//         await position.save();
+//       } else {
+//         await PositionsModel.create({
+//           userId,
+//           name,
+//           qty,
+//           avg: price,
+//           price,
+//           product: "MIS",
+//         });
+//       }
+//     }
+
+//     /* SELL LOGIC */
+//     if (mode === "SELL") {
+//       await PositionsModel.updateOne(
+//         { name, userId },
+//         { $inc: { qty: -qty } }
+//       );
+
+//       await HoldingsModel.updateOne(
+//         { name, userId },
+//         { $inc: { qty: -qty } }
+//       );
+//     }
+
+//     res.json({ success: true });
+//   } catch (error) {
+//     console.error("Order error:", error);
+//     res.status(500).json({ success: false });
+//   }
+// });
+
+// /* =======================
+//    FETCH DATA
+// ======================= */
+// app.get("/api/allOrders", authMiddleware, async (req, res) => {
+//   const orders = await OrdersModel.find({ userId: req.user.userId }).sort({
+//     createdAt: -1,
+//   });
+//   res.json(orders);
+// });
+
+// app.get("/api/allHoldings", authMiddleware, async (req, res) => {
+//   const holdings = await HoldingsModel.find({ userId: req.user.userId });
+//   res.json(holdings);
+// });
+
+// app.get("/api/allPositions", authMiddleware, async (req, res) => {
+//   const positions = await PositionsModel.find({ userId: req.user.userId });
+//   res.json(positions);
+// });
+
+// /* =======================
+//    DATABASE & SERVER
+// ======================= */
+// mongoose
+//   .connect(MONGO_URI)
+//   .then(() => {
+//     console.log(" MongoDB connected");
+//     app.listen(PORT, () => {
+//       console.log(`🚀 Server running on port ${PORT}`);
+//     });
+//   })
+//   .catch((err) => {
+//     console.error("MongoDB error:", err);
+//     process.exit(1);
+//   });
+
+
+
+
+
+
+
+
+
+// require("dotenv").config();
+
+// const express = require("express");
+// const mongoose = require("mongoose");
+// const cors = require("cors");
+// const jwt = require("jsonwebtoken");
+// const bcrypt = require("bcrypt");
+
+// const { UserModel } = require("./model/UserModel");
+// const { OrdersModel } = require("./model/OrdersModel");
+// const { HoldingsModel } = require("./model/HoldingsModel");
+// const { PositionsModel } = require("./model/PositionsModel");
+
+// const app = express();
+
+// /* =======================
+//    ENV VARIABLES
+// ======================= */
+// const PORT = process.env.PORT || 5000;
+// const MONGO_URI = process.env.MONGO_URI;
+// const JWT_SECRET = process.env.JWT_SECRET;
+
+// if (!MONGO_URI || !JWT_SECRET) {
+//   console.error("Missing environment variables");
+//   process.exit(1);
+// }
+
+// /* =======================
+//    MIDDLEWARE
+// ======================= */
+// app.use(
+//   cors({
+//     origin: ["http://localhost:3000", "http://localhost:3001"],
+//     credentials: true
+//   })
+// );
+
+// app.use(express.json());
+
+// /* =======================
+//    AUTH MIDDLEWARE
+// ======================= */
+// const authMiddleware = (req, res, next) => {
+//   try {
+//     const authHeader = req.headers.authorization;
+
+//     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+//       return res.status(401).json({ message: "No token provided" });
+//     }
+
+//     const token = authHeader.split(" ")[1];
+//     const decoded = jwt.verify(token, JWT_SECRET);
+
+//     req.user = decoded; // userId, email
+//     next();
+//   } catch (err) {
+//     return res.status(401).json({ message: "Invalid token" });
+//   }
+// };
+
+// /* =======================
+//    HEALTH CHECK
+// ======================= */
+// app.get("/api/health", (req, res) => {
+//   res.json({ status: "ok" });
+// });
+
+// /* =======================
+//    SIGNUP
+// ======================= */
+// app.post("/api/signup", async (req, res) => {
+//   try {
+//     const { name, email, password } = req.body;
+
+//     if (!name || !email || !password) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "All fields are required"
+//       });
+//     }
+
+//     const existingUser = await UserModel.findOne({
+//       email: email.toLowerCase().trim()
+//     });
+
+//     if (existingUser) {
+//       return res.status(409).json({
+//         success: false,
+//         message: "Email already registered"
+//       });
+//     }
+
+//     const hashedPassword = await bcrypt.hash(password, 10);
+
+//     await UserModel.create({
+//       name,
+//       email: email.toLowerCase().trim(),
+//       password: hashedPassword
+//     });
+
+//     return res.json({
+//       success: true,
+//       message: "Signup successful"
+//     });
+//   } catch (error) {
+//     console.error("Signup error:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Server error"
+//     });
+//   }
+// });
+
+// /* =======================
+//    LOGIN  (FIXED & ENABLED)
+// ======================= */
+// app.post("/api/login", async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     if (!email || !password) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Email and password required"
+//       });
+//     }
+
+//     const user = await UserModel.findOne({
+//       email: email.toLowerCase().trim()
+//     });
+
+//     if (!user) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Invalid credentials"
+//       });
+//     }
+
+//     const isMatch = await bcrypt.compare(password, user.password);
+
+//     if (!isMatch) {
+//       return res.status(401).json({
+//         success: false,
+//         message: "Invalid credentials"
+//       });
+//     }
+
+//     const token = jwt.sign(
+//       { userId: user._id, email: user.email },
+//       JWT_SECRET,
+//       { expiresIn: "24h" }
+//     );
+
+//     return res.json({
+//       success: true,
+//       token
+//     });
+//   } catch (error) {
+//     console.error("Login error:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Server error"
+//     });
+//   }
+// });
+
+// /* =======================
+//    NEW ORDER
+// ======================= */
+// app.post("/api/newOrder", authMiddleware, async (req, res) => {
+//   try {
+//     const { name, qty, price, mode } = req.body;
+//     const userId = req.user.userId;
+
+//     await OrdersModel.create({
+//       userId,
+//       name,
+//       qty,
+//       price,
+//       mode
+//     });
+
+//     if (mode === "BUY") {
+//       let holding = await HoldingsModel.findOne({ name, userId });
+
+//       if (holding) {
+//         const totalQty = holding.qty + qty;
+//         holding.avg =
+//           (holding.avg * holding.qty + price * qty) / totalQty;
+//         holding.qty = totalQty;
+//         holding.price = price;
+//         await holding.save();
+//       } else {
+//         await HoldingsModel.create({
+//           userId,
+//           name,
+//           qty,
+//           avg: price,
+//           price
+//         });
+//       }
+
+//       let position = await PositionsModel.findOne({ name, userId });
+//       if (position) {
+//         position.qty += qty;
+//         position.price = price;
+//         await position.save();
+//       } else {
+//         await PositionsModel.create({
+//           userId,
+//           name,
+//           qty,
+//           avg: price,
+//           price,
+//           product: "MIS"
+//         });
+//       }
+//     }
+
+//     if (mode === "SELL") {
+//       await PositionsModel.updateOne(
+//         { name, userId },
+//         { $inc: { qty: -qty } }
+//       );
+
+//       await HoldingsModel.updateOne(
+//         { name, userId },
+//         { $inc: { qty: -qty } }
+//       );
+//     }
+
+//     res.json({ success: true });
+//   } catch (error) {
+//     console.error("Order error:", error);
+//     res.status(500).json({ success: false });
+//   }
+// });
+
+// /* =======================
+//    FETCH DATA
+// ======================= */
+// app.get("/api/allOrders", authMiddleware, async (req, res) => {
+//   const orders = await OrdersModel.find({ userId: req.user.userId });
+//   res.json(orders);
+// });
+
+// app.get("/api/allHoldings", authMiddleware, async (req, res) => {
+//   const holdings = await HoldingsModel.find({ userId: req.user.userId });
+//   res.json(holdings);
+// });
+
+// app.get("/api/allPositions", authMiddleware, async (req, res) => {
+//   const positions = await PositionsModel.find({ userId: req.user.userId });
+//   res.json(positions);
+// });
+
+// /* =======================
+//    DATABASE AND SERVER
+// ======================= */
+// mongoose
+//   .connect(MONGO_URI)
+//   .then(() => {
+//     console.log("MongoDB connected");
+//     app.listen(PORT, () => {
+//       console.log("Server running on port " + PORT);
+//     });
+//   })
+//   .catch(err => {
+//     console.error(err);
+//     process.exit(1);
+//   });
+
+
+
+
+
+
+
+
+
+
+
+
+// require("dotenv").config();
+
+// const express = require("express");
+// const mongoose = require("mongoose");
+// const cors = require("cors");
+// const jwt = require("jsonwebtoken");
+// const bcrypt = require("bcrypt");
+
+// const { UserModel } = require("./model/UserModel");
+// const { OrdersModel } = require("./model/OrdersModel");
+// const { HoldingsModel } = require("./model/HoldingsModel");
+// const { PositionsModel } = require("./model/PositionsModel");
+
+// const app = express();
+
+// /* =======================
+//    ENV VARIABLES
+// ======================= */
+// const PORT = process.env.PORT || 5000;
+// const MONGO_URI = process.env.MONGO_URI;
+// const JWT_SECRET = process.env.JWT_SECRET;
+
+// if (!MONGO_URI || !JWT_SECRET) {
+//   console.error("Missing environment variables");
+//   process.exit(1);
+// }
+
+// /* =======================
+//    MIDDLEWARE
+// ======================= */
+// app.use(
+//   cors({
+//     origin: ["http://localhost:3000", "http://localhost:3001"],
+//     credentials: true
+//   })
+// );
+
+// app.use(express.json({ limit: "10kb" }));
+
+// /* =======================
+//    HEALTH CHECK
+// ======================= */
+// app.get("/api/health", (req, res) => {
+//   res.json({ status: "ok" });
+// });
+
+// /* =======================
+//    LOGIN
+// ======================= */
+// app.post("/api/login", async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     const user = await UserModel.findOne({
+//       email: email.toLowerCase().trim()
+//     });
+
+//     if (!user) {
+//       return res
+//         .status(401)
+//         .json({ success: false, message: "Invalid credentials" });
+//     }
+
+//     const ok = await bcrypt.compare(password, user.password);
+//     if (!ok) {
+//       return res
+//         .status(401)
+//         .json({ success: false, message: "Invalid credentials" });
+//     }
+
+//     const token = jwt.sign(
+//       { userId: user._id, email: user.email },
+//       JWT_SECRET,
+//       { expiresIn: "24h" }
+//     );
+
+//     res.json({ success: true, token });
+//   } catch (err) {
+//     res.status(500).json({ success: false });
+//   }
+// });
+
+// /* =======================
+//    NEW ORDER (BUY / SELL)
+// ======================= */
+// app.post("/api/newOrder", async (req, res) => {
+//   try {
+//     const { name, qty, price, mode } = req.body;
+
+//     // 1. Save order
+//     await OrdersModel.create({ name, qty, price, mode });
+
+//     // 2. BUY logic
+//     if (mode === "BUY") {
+//       // Holdings
+//       let holding = await HoldingsModel.findOne({ name });
+
+//       if (holding) {
+//         const totalQty = holding.qty + qty;
+//         const newAvg =
+//           (holding.avg * holding.qty + price * qty) / totalQty;
+
+//         holding.qty = totalQty;
+//         holding.avg = newAvg;
+//         holding.price = price;
+//         await holding.save();
+//       } else {
+//         await HoldingsModel.create({
+//           name,
+//           qty,
+//           avg: price,
+//           price
+//         });
+//       }
+
+//       // Positions
+//       let position = await PositionsModel.findOne({ name });
+
+//       if (position) {
+//         position.qty += qty;
+//         position.price = price;
+//         await position.save();
+//       } else {
+//         await PositionsModel.create({
+//           name,
+//           qty,
+//           avg: price,
+//           price,
+//           product: "MIS"
+//         });
+//       }
+//     }
+
+//     // 3. SELL logic
+//     if (mode === "SELL") {
+//       // Positions
+//       let position = await PositionsModel.findOne({ name });
+
+//       if (position) {
+//         position.qty -= qty;
+
+//         if (position.qty <= 0) {
+//           await PositionsModel.deleteOne({ name });
+//         } else {
+//           await position.save();
+//         }
+//       }
+
+//       // Holdings
+//       let holding = await HoldingsModel.findOne({ name });
+
+//       if (holding) {
+//         holding.qty -= qty;
+
+//         if (holding.qty <= 0) {
+//           await HoldingsModel.deleteOne({ name });
+//         } else {
+//           await holding.save();
+//         }
+//       }
+//     }
+
+//     res.json({ success: true });
+//   } catch (error) {
+//     console.error("Order error:", error);
+//     res.status(500).json({ success: false });
+//   }
+// });
+
+// /* =======================
+//    FETCH DATA
+// ======================= */
+// app.get("/api/allOrders", async (req, res) => {
+//   const orders = await OrdersModel.find({});
+//   res.json(orders);
+// });
+
+// app.get("/api/allHoldings", async (req, res) => {
+//   const holdings = await HoldingsModel.find({});
+//   res.json(holdings);
+// });
+
+// app.get("/api/allPositions", async (req, res) => {
+//   const positions = await PositionsModel.find({});
+//   res.json(positions);
+// });
+
+// /* =======================
+//    DATABASE + SERVER
+// ======================= */
+// mongoose
+//   .connect(MONGO_URI)
+//   .then(() => {
+//     console.log("MongoDB connected");
+//     app.listen(PORT, () =>
+//       console.log("Server running on port " + PORT)
+//     );
+//   })
+//   .catch(err => {
+//     console.error(err);
+//     process.exit(1);
+//   });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// require("dotenv").config();
+
+// const express = require("express");
+// const mongoose = require("mongoose");
+// const cors = require("cors");
+// const jwt = require("jsonwebtoken");
+// const bcrypt = require("bcrypt");
+
+// const { UserModel } = require("./model/UserModel");
+// const { OrdersModel } = require("./model/OrdersModel");
+// const { HoldingsModel } = require("./model/HoldingsModel");
+// const { PositionsModel } = require("./model/PositionsModel");
+
+// const app = express();
+
+// /* =======================
+//    ENV VARIABLES
+// ======================= */
+// const PORT = process.env.PORT || 5000;
+// const MONGO_URI = process.env.MONGO_URI;
+// const JWT_SECRET = process.env.JWT_SECRET;
+
+// if (!MONGO_URI || !JWT_SECRET) {
+//   console.error("Missing environment variables");
+//   process.exit(1);
+// }
+
+// /* =======================
+//    MIDDLEWARE
+// ======================= */
+// app.use(
+//   cors({
+//     origin: ["http://localhost:3000", "http://localhost:3001"],
+//     credentials: true
+//   })
+// );
+
+// app.use(express.json({ limit: "10kb" }));
+
+// /* =======================
+//    HEALTH CHECK
+// ======================= */
+// app.get("/api/health", (req, res) => {
+//   res.json({ status: "ok" });
+// });
+
+// /* =======================
+//    LOGIN
+// ======================= */
+// app.post("/api/login", async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+
+//     const user = await UserModel.findOne({
+//       email: email.toLowerCase().trim()
+//     });
+
+//     if (!user) {
+//       return res.status(401).json({ success: false, message: "Invalid credentials" });
+//     }
+
+//     const ok = await bcrypt.compare(password, user.password);
+//     if (!ok) {
+//       return res.status(401).json({ success: false, message: "Invalid credentials" });
+//     }
+
+//     const token = jwt.sign(
+//       { userId: user._id, email: user.email },
+//       JWT_SECRET,
+//       { expiresIn: "24h" }
+//     );
+
+//     res.json({ success: true, token });
+//   } catch (err) {
+//     res.status(500).json({ success: false });
+//   }
+// });
+
+// /* =======================
+//    ORDERS (NO AUTH – DEV)
+// ======================= */
+// app.post("/api/newOrder", async (req, res) => {
+//   try {
+//     const { name, qty, price, mode } = req.body;
+
+//     const order = new OrdersModel({
+//       name,
+//       qty,
+//       price,
+//       mode
+//     });
+
+//     await order.save();
+//     res.json({ success: true });
+//   } catch (err) {
+//     res.status(500).json({ success: false });
+//   }
+// });
+
+// app.get("/api/allOrders", async (req, res) => {
+//   const orders = await OrdersModel.find({});
+//   res.json(orders);
+// });
+
+// /* =======================
+//    HOLDINGS
+// ======================= */
+// app.get("/api/allHoldings", async (req, res) => {
+//   const holdings = await HoldingsModel.find({});
+//   res.json(holdings);
+// });
+
+// /* =======================
+//    POSITIONS
+// ======================= */
+// app.get("/api/allPositions", async (req, res) => {
+//   const positions = await PositionsModel.find({});
+//   res.json(positions);
+// });
+
+// /* =======================
+//    DATABASE + SERVER
+// ======================= */
+// mongoose.connect(MONGO_URI)
+//   .then(() => {
+//     console.log("MongoDB connected");
+//     app.listen(PORT, () =>
+//       console.log("Server running on port " + PORT)
+//     );
+//   })
+//   .catch(err => {
+//     console.error(err);
+//     process.exit(1);
+//   });
 
 
 
