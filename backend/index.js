@@ -43,11 +43,12 @@ app.use(
       "http://localhost:3000",
       "http://localhost:3001",
       "https://zerodhafnd-ui.vercel.app",
-      "https://dashazerodhprakash.vercel.app/"
+      "https://dashazerodhsangvi.vercel.app"
     ],
     credentials: true
   })
 );
+
 
 const authMiddleware = (req, res, next) => {
   try {
